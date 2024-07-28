@@ -1,0 +1,13 @@
+"filename", "language", "Lua", "comment", "blank", "total"
+"c:\Coding\LOVE\VoxelsV3\conf.lua", "Lua", 3, 0, 1, 4
+"c:\Coding\LOVE\VoxelsV3\main.lua", "Lua", 20, 0, 7, 27
+"c:\Coding\LOVE\VoxelsV3\modules\buffers.lua", "Lua", 229, 22, 27, 278
+"c:\Coding\LOVE\VoxelsV3\modules\camera.lua", "Lua", 712, 70, 213, 995
+"c:\Coding\LOVE\VoxelsV3\modules\math.lua", "Lua", 1614, 151, 262, 2027
+"c:\Coding\LOVE\VoxelsV3\modules\matrices.lua", "Lua", 458, 9, 62, 529
+"c:\Coding\LOVE\VoxelsV3\modules\quaternions.lua", "Lua", 340, 33, 42, 415
+"c:\Coding\LOVE\VoxelsV3\modules\shaders.lua", "Lua", 411, 25, 75, 511
+"c:\Coding\LOVE\VoxelsV3\modules\tables.lua", "Lua", 125, 23, 25, 173
+"c:\Coding\LOVE\VoxelsV3\modules\uniforms.lua", "Lua", 63, 0, 22, 85
+"c:\Coding\LOVE\VoxelsV3\modules\vec.lua", "Lua", 1455, 189, 189, 1833
+"Total", "-", 5430, 522, 925, 6877
