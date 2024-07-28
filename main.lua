@@ -48,6 +48,11 @@ local mainDepthTexture = love.graphics.newCanvas(love.graphics.getWidth(), love.
     readable = true,
 })
 
+local depthCopyTexture = love.graphics.newCanvas(love.graphics.getWidth(), love.graphics.getHeight(), {
+    format = "depth32f",
+    readable = true,
+})
+
 function love.load()
     Renderer.internal.renderer = love.graphics.getRendererInfo()
 
@@ -63,6 +68,8 @@ function love.load()
 
     Renderer.internal.shaders.skyboxRenderer:send("SkyboxTexture", Renderer.graphics.skybox)
     Renderer.internal.shaders.skyboxRenderer:send("SkyboxBrightness", { 1, 1, 1 })
+
+    WaterLOD = 0
 
     SolidsWorld = newVoxelWorld([[
     typedef struct {
@@ -80,7 +87,8 @@ function love.load()
     LiquidsWorld = newVoxelWorld([[
     typedef struct {
         int16_t x, y, z;
-        WaterVoxel voxels[4096];
+        uint8_t lod;
+        WaterVoxel voxels[?];
     } WaterChunk;
     ]], "WaterChunk", [[
         typedef struct {
@@ -127,6 +135,20 @@ function love.load()
     textures:setFilter("linear", "nearest", 16)
 
     Renderer.internal.shaders.main:send("voxelTextures", textures)
+end
+
+function love.keypressed(key)
+    if key == "escape" then
+        love.event.quit()
+    end
+
+    if key == "up" then
+        WaterLOD = WaterLOD + 1
+    end
+
+    if key == "down" then
+        WaterLOD = math.max(WaterLOD - 1, 0)
+    end
 end
 
 function love.mousemoved(x, y, dx, dy)
@@ -182,18 +204,19 @@ local time = 0
 function love.update(dt)
     Camera:update()
 
+    local cx, cy, cz = toChunkCoords(Camera.position.x, Camera.position.y, Camera.position.z)
+    local chunk = LiquidsWorld:getChunk(cx, cy, cz, 0)
+    local x, y, z = Camera.position:get()
+    x, y, z = math.floor(x), math.floor(y), math.floor(z)
+    local voxel = getVoxelFromChunk(chunk, toInChunkCoords(x, y, z))
     if love.keyboard.isDown("e") then
-        local voxel = LiquidsWorld:getVoxel(Camera.position:get())
-        voxel.waterLevel = 256
+        voxel.waterLevel = 255
         voxel.type = 3
     end
 
-
     updateCamera(dt)
 
-    if love.keyboard.isDown("q") then
-        time = time + dt
-    end
+    time = time + dt
 
     if time > 1 / 30 then
         time = time - 1 / 30
@@ -229,6 +252,18 @@ function love.draw()
         end
     end
 
+    love.graphics.setDepthMode("always", true)
+    love.graphics.setBlendMode("none")
+    love.graphics.setCanvas({ depthstencil = depthCopyTexture })
+    love.graphics.setShader(Renderer.internal.shaders.overrideDepth)
+    Renderer.internal.shaders.overrideDepth:send("DepthTexture", mainDepthTexture)
+    Renderer.internal.drawFullscreen()
+
+    love.graphics.setBlendMode("alpha", "alphamultiply")
+    love.graphics.setCanvas({ mainRenderTarget, depthstencil = mainDepthTexture })
+    love.graphics.setShader(Renderer.internal.shaders.main)
+    Renderer.internal.shaders.main:send("DepthTexture", depthCopyTexture)
+
     for _, chunk in ipairs(LiquidsWorld.objects.items) do
         if chunk.mesh then
             table.insert(worldItems, chunk)
@@ -238,6 +273,8 @@ function love.draw()
     table.sort(worldItems, function(a, b)
         return Camera.position:distanceSqr(a.position) > Camera.position:distanceSqr(b.position)
     end)
+
+    love.graphics.setDepthMode("less", false)
 
     for _, chunk in ipairs(worldItems) do
         Renderer.internal.shaders.main:send("Pos", { chunk.position.x, chunk.position.y, chunk.position.z })

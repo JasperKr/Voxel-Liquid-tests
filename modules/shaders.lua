@@ -363,4 +363,6 @@ function Renderer.graphics.compileShaders()
         { debugname = "Main shader" }) or Renderer.internal.shaders.main
     Renderer.internal.shaders.skyboxRenderer = Renderer.graphics.newShader("skyboxRenderer.glsl",
         { debugname = "Skybox shader" }) or Renderer.internal.shaders.skyboxRenderer
+    Renderer.internal.shaders.overrideDepth = Renderer.graphics.newShader("overrideDepth.glsl",
+        { debugname = "Override depth shader" }) or Renderer.internal.shaders.overrideDepth
 end
