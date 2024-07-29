@@ -425,7 +425,7 @@ function VoxelWorldFunctions:downSampleChunk(chunk)
                 local voxel = getVoxelFromChunk(newChunk, voxelX, voxelY, voxelZ)
 
                 local sum = 0
-                local hasSolidVoxel = false
+                local allTheSameLiquid = true
 
                 for x = 0, scale - 1 do
                     for y = 0, scale - 1 do
@@ -437,26 +437,25 @@ function VoxelWorldFunctions:downSampleChunk(chunk)
                                 chunk.chunk.lod
                             )
 
-                            -- if is solid
-                            if oldVoxel.type ~= 0 and oldVoxel.type ~= 3 then
-                                hasSolidVoxel = true
+                            if oldVoxel.type ~= 3 then
+                                allTheSameLiquid = false
                                 break
                             end
 
                             sum = sum + oldVoxel.waterLevel
                         end
 
-                        if hasSolidVoxel then
+                        if not allTheSameLiquid then
                             break
                         end
                     end
 
-                    if hasSolidVoxel then
+                    if not allTheSameLiquid then
                         break
                     end
                 end
 
-                if hasSolidVoxel then
+                if not allTheSameLiquid then
                     voxel.type = 1
                 else
                     voxel.type = 3
@@ -600,99 +599,96 @@ local flowDirections = {
     { 1,  0, 0 },
 }
 
+function VoxelWorldFunctions:updateWater(chunk, voxel, voxelX, voxelY, voxelZ)
+    if voxel.type == 3 and voxel.waterLevel > 0 then
+        local oX, oY, oZ = voxelX, voxelY - 1, voxelZ
+
+        local voxelBelow = self:getVoxel(
+            oX + chunk.chunk.x,
+            oY + chunk.chunk.y,
+            oZ + chunk.chunk.z,
+            0
+        )
+
+        local solidVoxelBelow = self.solidsVoxelWorld:getVoxel(
+            oX + chunk.chunk.x,
+            oY + chunk.chunk.y,
+            oZ + chunk.chunk.z,
+            0
+        )
+
+        if solidVoxelBelow.type == 0 and (voxelBelow.type == 0 or voxelBelow.type == 3) and voxelBelow.waterLevel < 255 then
+            local flowRate = math.ceil(255 - clamp(voxelBelow.waterLevel, 0, 255))
+            flowRate = math.min(flowRate, voxel.waterLevel)
+
+            voxelBelow.waterLevel = clamp(voxelBelow.waterLevel + flowRate, 0, 255)
+            voxel.waterLevel = clamp(voxel.waterLevel - flowRate, 0, 255)
+            voxelBelow.type = 3
+        else
+            local direction = flowDirections[love.math.random(1, 4)]
+
+            oX, oY, oZ = voxelX + direction[1], voxelY + direction[2],
+                voxelZ + direction[3]
+
+            local otherVoxel = self:getVoxel(
+                oX + chunk.chunk.x,
+                oY + chunk.chunk.y,
+                oZ + chunk.chunk.z,
+                0
+            )
+
+            local otherSolidVoxel = self.solidsVoxelWorld:getVoxel(
+                oX + chunk.chunk.x,
+                oY + chunk.chunk.y,
+                oZ + chunk.chunk.z,
+                0
+            )
+
+            if otherSolidVoxel.type == 0 and (otherVoxel.type == 0 or otherVoxel.type == 3) then
+                if otherVoxel.waterLevel < voxel.waterLevel then
+                    local diff = voxel.waterLevel - otherVoxel.waterLevel
+                    local flowRate = math.ceil(diff * 0.5)
+                    flowRate = math.min(flowRate, voxel.waterLevel)
+
+                    otherVoxel.waterLevel = clamp(otherVoxel.waterLevel + flowRate, 0, 255)
+                    otherVoxel.type = 3
+                    voxel.waterLevel = clamp(voxel.waterLevel - flowRate, 0, 255)
+                elseif otherVoxel.waterLevel > voxel.waterLevel then
+                    local diff = otherVoxel.waterLevel - voxel.waterLevel
+                    local flowRate = math.ceil(diff * 0.5)
+                    flowRate = math.min(flowRate, otherVoxel.waterLevel)
+
+                    voxel.waterLevel = clamp(voxel.waterLevel + flowRate, 0, 255)
+                    voxel.type = 3
+                    otherVoxel.waterLevel = clamp(otherVoxel.waterLevel - flowRate, 0, 255)
+                end
+            end
+        end
+    end
+
+    if voxel.type == 3 and voxel.waterLevel == 0 then
+        voxel.type = 0
+    end
+end
+
 function VoxelWorldFunctions:updateVoxelWorld()
     for x = WorldSize.min.x, WorldSize.max.x, chunkSize do
         for y = WorldSize.min.y, WorldSize.max.y, chunkSize do
             for z = WorldSize.min.z, WorldSize.max.z, chunkSize do
                 local chunk = self:getChunk(x, y, z, 0)
 
-                -- if chunk.updateMin.x < chunk.updateMax.x then
                 for voxelX = 0, chunkSize - 1 do
                     for voxelY = 0, chunkSize - 1 do
                         for voxelZ = 0, chunkSize - 1 do
                             local voxel = getVoxelFromChunk(chunk, voxelX, voxelY, voxelZ)
 
-                            if voxel.type == 3 and voxel.waterLevel > 0 then
-                                local oX, oY, oZ = voxelX, voxelY - 1, voxelZ
-
-                                local voxelBelow = self:getVoxel(
-                                    oX + chunk.chunk.x,
-                                    oY + chunk.chunk.y,
-                                    oZ + chunk.chunk.z,
-                                    0
-                                )
-
-                                local solidVoxelBelow = self.solidsVoxelWorld:getVoxel(
-                                    oX + chunk.chunk.x,
-                                    oY + chunk.chunk.y,
-                                    oZ + chunk.chunk.z,
-                                    0
-                                )
-
-                                if solidVoxelBelow.type == 0 and (voxelBelow.type == 0 or voxelBelow.type == 3) and voxelBelow.waterLevel < 255 then
-                                    local flowRate = math.ceil(255 - clamp(voxelBelow.waterLevel, 0, 255))
-                                    flowRate = math.min(flowRate, voxel.waterLevel)
-
-                                    voxelBelow.waterLevel = clamp(voxelBelow.waterLevel + flowRate, 0, 255)
-                                    voxel.waterLevel = clamp(voxel.waterLevel - flowRate, 0, 255)
-                                    voxelBelow.type = 3
-                                end
-
-                                local direction = flowDirections[love.math.random(1, 4)]
-
-                                oX, oY, oZ = voxelX + direction[1], voxelY + direction[2],
-                                    voxelZ + direction[3]
-
-                                local otherVoxel = self:getVoxel(
-                                    oX + chunk.chunk.x,
-                                    oY + chunk.chunk.y,
-                                    oZ + chunk.chunk.z,
-                                    0
-                                )
-
-                                local otherSolidVoxel = self.solidsVoxelWorld:getVoxel(
-                                    oX + chunk.chunk.x,
-                                    oY + chunk.chunk.y,
-                                    oZ + chunk.chunk.z,
-                                    0
-                                )
-
-                                if otherSolidVoxel.type == 0 and (otherVoxel.type == 0 or otherVoxel.type == 3) then
-                                    if otherVoxel.waterLevel < voxel.waterLevel then
-                                        local diff = voxel.waterLevel - otherVoxel.waterLevel
-                                        local flowRate = math.ceil(diff * 0.5)
-                                        flowRate = math.min(flowRate, voxel.waterLevel)
-
-                                        otherVoxel.waterLevel = clamp(otherVoxel.waterLevel + flowRate, 0, 255)
-                                        otherVoxel.type = 3
-                                        voxel.waterLevel = clamp(voxel.waterLevel - flowRate, 0, 255)
-                                    elseif otherVoxel.waterLevel > voxel.waterLevel then
-                                        local diff = otherVoxel.waterLevel - voxel.waterLevel
-                                        local flowRate = math.ceil(diff * 0.5)
-                                        flowRate = math.min(flowRate, otherVoxel.waterLevel)
-
-                                        voxel.waterLevel = clamp(voxel.waterLevel + flowRate, 0, 255)
-                                        voxel.type = 3
-                                        otherVoxel.waterLevel = clamp(otherVoxel.waterLevel - flowRate, 0, 255)
-                                    end
-                                end
-                            end
-
-                            if voxel.type == 3 and voxel.waterLevel == 0 then
-                                voxel.type = 0
-                            end
+                            self:updateWater(chunk, voxel, voxelX, voxelY, voxelZ)
                         end
                     end
                 end
 
-                -- if recordedMax.x >= recordedMin.x or recordedMax.y >= recordedMin.y or recordedMax.z >= recordedMin.z then
                 self:calculateChunkMeshFacesActive(chunk)
                 self:updateChunkVertices(chunk)
-                -- end
-
-                -- chunk.updateMin = recordedMin
-                -- chunk.updateMax = recordedMax
-                -- end
             end
         end
     end

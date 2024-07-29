@@ -57,7 +57,7 @@ function love.load()
     Renderer.internal.renderer = love.graphics.getRendererInfo()
 
     Camera = Renderer.graphics.newCamera(vec3(0.0), vec3(0.0), vec2(love.graphics.getDimensions()), "Main camera", 0.1,
-        1000.0, {
+        10000.0, {
             highPrecision = true,
             postProcessing = false,
             renderSkybox = true,
@@ -150,6 +150,44 @@ function love.load()
     textures:setFilter("linear", "nearest", 16)
 
     Renderer.internal.shaders.main:send("voxelTextures", textures)
+
+    -- load cubemap
+
+    local path = "cubemaps"
+
+    local irradianceMipCount = 6
+    local specularMipCount = 10
+    local irradianceSize = 32
+    local specularSize = 512
+
+    local imageDatas = {
+        specular = {},
+        irradiance = {},
+    }
+
+    for face = 1, 6 do
+        imageDatas.specular[face] = {}
+        for mip = 1, specularMipCount do
+            local size = bit.rshift(specularSize, mip - 1)
+            local dataPath = path .. "/specular/face" .. face .. "/" .. mip
+            local data = love.filesystem.read("string", dataPath)
+            table.insert(imageDatas.specular[face], love.image.newImageData(size, size, "rg11b10f", data))
+        end
+
+        imageDatas.irradiance[face] = {}
+        for mip = 1, irradianceMipCount do
+            local size = bit.rshift(irradianceSize, mip - 1)
+            local dataPath = path .. "/irradiance/face" .. face .. "/" .. mip
+            local data = love.filesystem.read("string", dataPath)
+            table.insert(imageDatas.irradiance[face], love.image.newImageData(size, size, "rg11b10f", data))
+        end
+    end
+
+    SpecularCubemap = love.graphics.newCubeTexture(imageDatas.specular, { mipmaps = "auto", linear = true })
+    IrradianceCubemap = love.graphics.newCubeTexture(imageDatas.irradiance, { linear = true })
+
+    -- Renderer.internal.shaders.main:send("SpecularCubemap", SpecularCubemap)
+    Renderer.internal.shaders.main:send("IrradianceCubemap", IrradianceCubemap)
 end
 
 function love.keypressed(key)
