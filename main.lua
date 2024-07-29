@@ -19,6 +19,7 @@ Renderer = {
         }
     },
     graphics = {
+        ---@diagnostic disable-next-line: undefined-field
         skybox = love.graphics.newCubeTexture("skybox.exr"),
     },
     math = {},
@@ -143,6 +144,7 @@ function love.load()
         stoneTexture,
         grassTexture,
         waterTexture,
+        ---@diagnostic disable-next-line: assign-type-mismatch
     }, { mipmaps = "auto" })
 
     textures:setFilter("linear", "nearest", 16)
@@ -169,6 +171,7 @@ function love.load()
             local size = bit.rshift(specularSize, mip - 1)
             local dataPath = path .. "/specular/face" .. face .. "/" .. mip
             local data = love.filesystem.read("string", dataPath)
+            ---@diagnostic disable-next-line: param-type-mismatch
             table.insert(imageDatas.specular[face], love.image.newImageData(size, size, "rg11b10f", data))
         end
 
@@ -177,11 +180,15 @@ function love.load()
             local size = bit.rshift(irradianceSize, mip - 1)
             local dataPath = path .. "/irradiance/face" .. face .. "/" .. mip
             local data = love.filesystem.read("string", dataPath)
+            ---@diagnostic disable-next-line: param-type-mismatch
             table.insert(imageDatas.irradiance[face], love.image.newImageData(size, size, "rg11b10f", data))
         end
     end
 
+    ---@diagnostic disable-next-line: undefined-field
     SpecularCubemap = love.graphics.newCubeTexture(imageDatas.specular, { mipmaps = "auto", linear = true })
+
+    ---@diagnostic disable-next-line: undefined-field
     IrradianceCubemap = love.graphics.newCubeTexture(imageDatas.irradiance, { linear = true })
 
     Renderer.internal.shaders.main:send("SpecularCubemap", SpecularCubemap)
@@ -287,6 +294,7 @@ end
 local time = 0.0
 
 local voxelsChecked = {}
+local chunksUpdated = {}
 
 function love.update(dt)
     Camera:update()
@@ -321,12 +329,18 @@ function love.update(dt)
                     SolidsWorld:calculateChunkMeshFacesActive(chunk)
                     SolidsWorld:updateChunkVertices(chunk)
 
+                    table.clear(chunksUpdated)
+
+                    chunksUpdated[chunk] = true
+
                     for x = -1, 1, 2 do
                         for y = -1, 1, 2 do
                             for z = -1, 1, 2 do
                                 local _, otherChunk = SolidsWorld:getVoxel(hitX + x, hitY + y, hitZ + z, 0)
 
-                                if otherChunk ~= chunk then
+                                if not chunksUpdated[otherChunk] then
+                                    chunksUpdated[otherChunk] = true
+
                                     SolidsWorld:calculateChunkMeshFacesActive(otherChunk)
                                     SolidsWorld:updateChunkVertices(otherChunk)
                                 end
@@ -442,6 +456,7 @@ function love.draw()
     end
 
     love.graphics.setDepthMode("always", true)
+    ---@diagnostic disable-next-line: param-type-mismatch
     love.graphics.setBlendMode("none")
     love.graphics.setCanvas({ depthstencil = depthCopyTexture })
     love.graphics.setShader(Renderer.internal.shaders.overrideDepth)

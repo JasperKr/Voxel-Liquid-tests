@@ -8,12 +8,16 @@ inverseChunkSize = 1 / chunkSize
 ---@field voxelType ffi.cdata*
 ---@field chunkDef string
 ---@field voxelDef string
----@field chunkName string
+---@field chunkName ffi.cdecl*
 ---@field voxelName string
 ---@field updateType string
 ---@field objects table
 ---@field isLiquidWorld boolean
 ---@field solidsVoxelWorld VoxelWorld
+---@field lodChunkDef string
+---@field lodChunkName ffi.cdecl*
+---@field lodVoxelDef string
+---@field lodVoxelName string
 local VoxelWorldFunctions = {}
 local VoxelWorldMeta = {
     __index = VoxelWorldFunctions,
@@ -160,6 +164,7 @@ function fbm(x, y, z)
     local a = 1.0
     local t = 0.0
     for i = 1, 6 do
+        ---@diagnostic disable-next-line: undefined-field
         t = t + a * love.math.perlinNoise(f * x, f * y, f * z)
         f = f * 2.0
         a = a * 0.5
@@ -475,7 +480,6 @@ function VoxelWorldFunctions:downSampleChunk(chunk)
 end
 
 ---comment
----@param chunk {mesh: love.Mesh, vertices: table, indices: table, position: vec3, id: string}
 ---@return nil
 function VoxelWorldFunctions:updateChunkVertices(chunk)
     local index = 0
