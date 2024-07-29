@@ -100,21 +100,26 @@ function VoxelWorldFunctions:getChunk(x, y, z, w)
 
     if not self.chunkGrid[x][y][z][w] then
         if self.isLiquidWorld then
-            local lodDiv = bit.lshift(1, w)
-
             if w > 0 then
+                local size = bit.rshift(chunkSize, w)
+                local voxelCount = math.pow(size, 3)
+
                 self.chunkGrid[x][y][z][w] = {
-                    chunk = ffi.new(self.lodChunkName, math.pow(chunkSize / lodDiv, 3), x, y, z, w,
+                    chunk = ffi.new(self.lodChunkName, voxelCount, x, y, z, w,
                         { { 0 } }),
                     vertices = {},
                     indices = {},
+                    updateMin = vec3(),
+                    updateMax = vec3(size - 1, size - 1, size - 1)
                 }
             else
                 self.chunkGrid[x][y][z][w] = {
-                    chunk = ffi.new(self.chunkName, math.pow(chunkSize / lodDiv, 3), x, y, z, w,
+                    chunk = ffi.new(self.chunkName, math.pow(chunkSize, 3), x, y, z, w,
                         { { 0 } }),
                     vertices = {},
                     indices = {},
+                    updateMin = vec3(),
+                    updateMax = vec3(chunkSize - 1, chunkSize - 1, chunkSize - 1)
                 }
             end
         else
@@ -145,7 +150,7 @@ function VoxelWorldFunctions:getVoxel(x, y, z, w)
     local chunkX, chunkY, chunkZ = toChunkCoords(x, y, z, size)
     local chunk = self:getChunk(chunkX, chunkY, chunkZ, w)
 
-    return getVoxelFromChunk(chunk, toInChunkCoords(x, y, z, size))
+    return getVoxelFromChunk(chunk, toInChunkCoords(x, y, z, size)), chunk
 end
 
 function fbm(x, y, z)
@@ -217,6 +222,15 @@ local faceDirections = {
     { 1,  0,  0,  faceRight },
     { 0,  1,  0,  faceUp },
     { 0,  -1, 0,  faceDown },
+}
+
+local faces = {
+    { { 0, 0, 0, 0, 0, 0, 0 }, { 1, 0, 0, 0, 1, 0, 0 }, { 1, 1, 0, 0, 1, 1, 0 }, { 0, 1, 0, 0, 0, 1, 0 } }, -- forwards
+    { { 0, 0, 1, 0, 0, 0, 1 }, { 1, 0, 1, 0, 1, 0, 1 }, { 1, 1, 1, 0, 1, 1, 1 }, { 0, 1, 1, 0, 0, 1, 1 } }, -- backwards
+    { { 0, 0, 0, 0, 0, 0, 2 }, { 0, 0, 1, 0, 1, 0, 2 }, { 0, 1, 1, 0, 1, 1, 2 }, { 0, 1, 0, 0, 0, 1, 2 } }, -- left
+    { { 1, 0, 0, 0, 0, 0, 3 }, { 1, 0, 1, 0, 1, 0, 3 }, { 1, 1, 1, 0, 1, 1, 3 }, { 1, 1, 0, 0, 0, 1, 3 } }, -- right
+    { { 0, 1, 0, 0, 0, 0, 4 }, { 1, 1, 0, 0, 1, 0, 4 }, { 1, 1, 1, 0, 1, 1, 4 }, { 0, 1, 1, 0, 0, 1, 4 } }, -- up
+    { { 0, 0, 0, 0, 0, 0, 5 }, { 1, 0, 0, 0, 1, 0, 5 }, { 1, 0, 1, 0, 1, 1, 5 }, { 0, 0, 1, 0, 0, 1, 5 } }, -- down
 }
 
 local faceAll = faceForward + faceBackward + faceLeft + faceRight + faceUp + faceDown
@@ -301,15 +315,6 @@ local function generateQuadIndices(quadCount)
     return indices
 end
 
-local faces = {
-    { { 0, 0, 0, 0, 0, 0, 0 }, { 1, 0, 0, 0, 1, 0, 0 }, { 1, 1, 0, 0, 1, 1, 0 }, { 0, 1, 0, 0, 0, 1, 0 } }, -- forwards
-    { { 0, 0, 1, 0, 0, 0, 1 }, { 1, 0, 1, 0, 1, 0, 1 }, { 1, 1, 1, 0, 1, 1, 1 }, { 0, 1, 1, 0, 0, 1, 1 } }, -- backwards
-    { { 0, 0, 0, 0, 0, 0, 2 }, { 0, 0, 1, 0, 1, 0, 2 }, { 0, 1, 1, 0, 1, 1, 2 }, { 0, 1, 0, 0, 0, 1, 2 } }, -- left
-    { { 1, 0, 0, 0, 0, 0, 3 }, { 1, 0, 1, 0, 1, 0, 3 }, { 1, 1, 1, 0, 1, 1, 3 }, { 1, 1, 0, 0, 0, 1, 3 } }, -- right
-    { { 0, 1, 0, 0, 0, 0, 4 }, { 1, 1, 0, 0, 1, 0, 4 }, { 1, 1, 1, 0, 1, 1, 4 }, { 0, 1, 1, 0, 0, 1, 4 } }, -- up
-    { { 0, 0, 0, 0, 0, 0, 5 }, { 1, 0, 0, 0, 1, 0, 5 }, { 1, 0, 1, 0, 1, 1, 5 }, { 0, 0, 1, 0, 0, 1, 5 } }, -- down
-}
-
 function VoxelWorldFunctions:generateChunkVertices(chunk)
     local vertices = {}
     local faceCount = 0
@@ -365,15 +370,6 @@ function VoxelWorldFunctions:generateChunkVertices(chunk)
                                         })
                                     end
                                 else
-                                    assert(vertex[1] + voxelX >= 0, "vertex[1] + voxelX >= 0")
-                                    assert(vertex[2] + voxelY >= 0, "vertex[2] + voxelY >= 0")
-                                    assert(vertex[3] + voxelZ >= 0, "vertex[3] + voxelZ >= 0")
-                                    assert(voxel.type >= 0, "voxel.type >= 0")
-
-                                    assert(vertex[1] + voxelX <= 255, "vertex[1] + voxelX <= 255")
-                                    assert(vertex[2] + voxelY <= 255, "vertex[2] + voxelY <= 255")
-                                    assert(vertex[3] + voxelZ <= 255, "vertex[3] + voxelZ <= 255")
-
                                     table.insert(vertices, {
                                         tonumber(vertex[1] + voxelX),
                                         tonumber(vertex[2] + voxelY),
@@ -396,8 +392,11 @@ function VoxelWorldFunctions:generateChunkVertices(chunk)
     chunk.position = vec3(chunk.chunk.x, chunk.chunk.y, chunk.chunk.z)
     chunk.id = tostring(chunk.chunk.x) .. tostring(chunk.chunk.y) .. tostring(chunk.chunk.z)
     if faceCount == 0 then
+        chunk.drawMesh = false
         return chunk
     end
+
+    chunk.drawMesh = true
 
     local indices = generateQuadIndices(faceCount)
 
@@ -473,6 +472,8 @@ function VoxelWorldFunctions:updateChunkVertices(chunk)
     local index = 0
     local vertexCount = #chunk.vertices
 
+    -- local scale = bit.lshift(1, chunk.chunk.lod)
+
     for voxelX = 0, chunkSize - 1 do
         for voxelY = 0, chunkSize - 1 do
             for voxelZ = 0, chunkSize - 1 do
@@ -541,8 +542,12 @@ function VoxelWorldFunctions:updateChunkVertices(chunk)
     end
 
     if index == 0 then
+        chunk.drawMesh = false
+
         return nil
     end
+
+    chunk.drawMesh = true
 
     if index > vertexCount then
         local indices = generateQuadIndices(index / 4)
@@ -551,8 +556,13 @@ function VoxelWorldFunctions:updateChunkVertices(chunk)
         chunk.mesh = mesh
         chunk.indices = indices
     else
+        local indices = generateQuadIndices(index / 4)
+
         chunk.mesh:setVertices(chunk.vertices)
-        chunk.mesh:setDrawRange(1, vertexCount / 4 * 6)
+        chunk.mesh:setVertexMap(indices)
+
+        chunk.mesh:setDrawRange(1, #indices)
+        chunk.indices = indices
     end
 end
 
@@ -599,23 +609,31 @@ local flowDirections = {
     { 1,  0, 0 },
 }
 
+local function updateChunkUpdateLimits(chunk, minX, minY, minZ, maxX, maxY, maxZ)
+    minX = minX - chunk.chunk.x
+    minY = minY - chunk.chunk.y
+    minZ = minZ - chunk.chunk.z
+
+    maxX = maxX - chunk.chunk.x
+    maxY = maxY - chunk.chunk.y
+    maxZ = maxZ - chunk.chunk.z
+
+    assert(minX <= maxX and minY <= maxY and minZ <= maxZ, "min must be less than max")
+
+    chunk.updateMin:minSeparate(minX, minY, minZ)
+    chunk.updateMax:maxSeparate(maxX, maxY, maxZ)
+end
+
 function VoxelWorldFunctions:updateWater(chunk, voxel, voxelX, voxelY, voxelZ)
+    voxelX = voxelX + chunk.chunk.x
+    voxelY = voxelY + chunk.chunk.y
+    voxelZ = voxelZ + chunk.chunk.z
+
+    local updated = false
+
     if voxel.type == 3 and voxel.waterLevel > 0 then
-        local oX, oY, oZ = voxelX, voxelY - 1, voxelZ
-
-        local voxelBelow = self:getVoxel(
-            oX + chunk.chunk.x,
-            oY + chunk.chunk.y,
-            oZ + chunk.chunk.z,
-            0
-        )
-
-        local solidVoxelBelow = self.solidsVoxelWorld:getVoxel(
-            oX + chunk.chunk.x,
-            oY + chunk.chunk.y,
-            oZ + chunk.chunk.z,
-            0
-        )
+        local voxelBelow, chunkBelow = self:getVoxel(voxelX, voxelY - 1, voxelZ, 0)
+        local solidVoxelBelow = self.solidsVoxelWorld:getVoxel(voxelX, voxelY - 1, voxelZ, 0)
 
         if solidVoxelBelow.type == 0 and (voxelBelow.type == 0 or voxelBelow.type == 3) and voxelBelow.waterLevel < 255 then
             local flowRate = math.ceil(255 - clamp(voxelBelow.waterLevel, 0, 255))
@@ -624,28 +642,35 @@ function VoxelWorldFunctions:updateWater(chunk, voxel, voxelX, voxelY, voxelZ)
             voxelBelow.waterLevel = clamp(voxelBelow.waterLevel + flowRate, 0, 255)
             voxel.waterLevel = clamp(voxel.waterLevel - flowRate, 0, 255)
             voxelBelow.type = 3
+
+            local minX, minY, minZ = voxelX, voxelY - 1, voxelZ
+            local maxX, maxY, maxZ = voxelX, voxelY, voxelZ
+
+            updateChunkUpdateLimits(chunkBelow, minX - 1, minY - 1, minZ - 1, maxX + 1, maxY + 1, maxZ + 1)
+            updateChunkUpdateLimits(chunk, minX - 1, minY - 1, minZ - 1, maxX + 1, maxY + 1, maxZ + 1)
+
+            updated = true
         else
             local direction = flowDirections[love.math.random(1, 4)]
 
-            oX, oY, oZ = voxelX + direction[1], voxelY + direction[2],
+            local oX, oY, oZ =
+                voxelX + direction[1],
+                voxelY + direction[2],
                 voxelZ + direction[3]
 
-            local otherVoxel = self:getVoxel(
-                oX + chunk.chunk.x,
-                oY + chunk.chunk.y,
-                oZ + chunk.chunk.z,
-                0
-            )
+            local otherVoxel, otherChunk = self:getVoxel(oX, oY, oZ, 0)
+            local otherSolidVoxel = self.solidsVoxelWorld:getVoxel(oX, oY, oZ, 0)
 
-            local otherSolidVoxel = self.solidsVoxelWorld:getVoxel(
-                oX + chunk.chunk.x,
-                oY + chunk.chunk.y,
-                oZ + chunk.chunk.z,
-                0
-            )
+            local minX, minY, minZ = math.min(voxelX, oX), math.min(voxelY, oY), math.min(voxelZ, oZ)
+            local maxX, maxY, maxZ = math.max(voxelX, oX), math.max(voxelY, oY), math.max(voxelZ, oZ)
+
+            updateChunkUpdateLimits(otherChunk, minX - 1, minY - 1, minZ - 1, maxX + 1, maxY + 1, maxZ + 1)
+            updateChunkUpdateLimits(chunk, minX - 1, minY - 1, minZ - 1, maxX + 1, maxY + 1, maxZ + 1)
 
             if otherSolidVoxel.type == 0 and (otherVoxel.type == 0 or otherVoxel.type == 3) then
                 if otherVoxel.waterLevel < voxel.waterLevel then
+                    updated = true
+
                     local diff = voxel.waterLevel - otherVoxel.waterLevel
                     local flowRate = math.ceil(diff * 0.5)
                     flowRate = math.min(flowRate, voxel.waterLevel)
@@ -654,6 +679,8 @@ function VoxelWorldFunctions:updateWater(chunk, voxel, voxelX, voxelY, voxelZ)
                     otherVoxel.type = 3
                     voxel.waterLevel = clamp(voxel.waterLevel - flowRate, 0, 255)
                 elseif otherVoxel.waterLevel > voxel.waterLevel then
+                    updated = true
+
                     local diff = otherVoxel.waterLevel - voxel.waterLevel
                     local flowRate = math.ceil(diff * 0.5)
                     flowRate = math.min(flowRate, otherVoxel.waterLevel)
@@ -668,8 +695,17 @@ function VoxelWorldFunctions:updateWater(chunk, voxel, voxelX, voxelY, voxelZ)
 
     if voxel.type == 3 and voxel.waterLevel == 0 then
         voxel.type = 0
+
+        updateChunkUpdateLimits(chunk, voxelX, voxelY, voxelZ, voxelX, voxelY, voxelZ)
+
+        updated = true
     end
+
+    return updated
 end
+
+local curUpdateMin = vec3()
+local curUpdateMax = vec3()
 
 function VoxelWorldFunctions:updateVoxelWorld()
     for x = WorldSize.min.x, WorldSize.max.x, chunkSize do
@@ -677,18 +713,33 @@ function VoxelWorldFunctions:updateVoxelWorld()
             for z = WorldSize.min.z, WorldSize.max.z, chunkSize do
                 local chunk = self:getChunk(x, y, z, 0)
 
-                for voxelX = 0, chunkSize - 1 do
-                    for voxelY = 0, chunkSize - 1 do
-                        for voxelZ = 0, chunkSize - 1 do
+                curUpdateMin:set(chunk.updateMin:get())
+                curUpdateMax:set(chunk.updateMax:get())
+
+                curUpdateMin:maxSeparate(0, 0, 0)
+                curUpdateMax:minSeparate(chunkSize - 1, chunkSize - 1, chunkSize - 1)
+
+                chunk.updateMin:set(chunkSize - 1, chunkSize - 1, chunkSize - 1)
+                chunk.updateMax:set(0, 0, 0)
+
+                local updatedAny = false
+
+                for voxelX = curUpdateMin.x, curUpdateMax.x do
+                    for voxelY = curUpdateMin.y, curUpdateMax.y do
+                        for voxelZ = curUpdateMin.z, curUpdateMax.z do
                             local voxel = getVoxelFromChunk(chunk, voxelX, voxelY, voxelZ)
 
                             self:updateWater(chunk, voxel, voxelX, voxelY, voxelZ)
+
+                            updatedAny = true
                         end
                     end
                 end
 
-                self:calculateChunkMeshFacesActive(chunk)
-                self:updateChunkVertices(chunk)
+                if updatedAny then
+                    self:calculateChunkMeshFacesActive(chunk)
+                    self:updateChunkVertices(chunk)
+                end
             end
         end
     end

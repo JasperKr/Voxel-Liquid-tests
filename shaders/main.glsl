@@ -119,23 +119,28 @@ void pixelmain() {
 
     vec4 color = texture(voxelTextures, vec3(uv, type));
 
-    vec3 irradiance = textureLod(IrradianceCubemap, normal, 0.0).rgb;
+    vec3 vertexNormal = normal;
+
+    if (type == 3.0)
+        vertexNormal = -vertexNormal;
+
+    vec3 irradiance = textureLod(IrradianceCubemap, vertexNormal, 0.0).rgb;
 
     vec3 viewRay = normalize(worldPosition - cameras[0].Position);
-    vec3 reflected = reflect(viewRay, normal);
+    vec3 reflected = reflect(viewRay, vertexNormal);
     if (type == 3.0)
-        reflected = refract(viewRay, normal, 1.0 / 1.33);
+        reflected = refract(viewRay, vertexNormal, 1.0 / 1.33);
 
     reflected.y = -reflected.y;
 
-    float NoV = clampNoV(dot(normal, -viewRay));
+    float NoV = clampNoV(abs(dot(vertexNormal, -viewRay)));
 
-    float metallic = 0.0;
-    float perceptualRoughness = 0.75;
+    float metallic = 0.1;
+    float perceptualRoughness = 0.5;
 
     if (type == 3.0) {
         metallic = 1.0;
-        perceptualRoughness = 0.05;
+        perceptualRoughness = 0.00;
     }
 
     vec3 fresnel0 = computeF0(color.rgb, metallic, 0.0);

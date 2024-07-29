@@ -186,7 +186,7 @@ function love.load()
     SpecularCubemap = love.graphics.newCubeTexture(imageDatas.specular, { mipmaps = "auto", linear = true })
     IrradianceCubemap = love.graphics.newCubeTexture(imageDatas.irradiance, { linear = true })
 
-    -- Renderer.internal.shaders.main:send("SpecularCubemap", SpecularCubemap)
+    Renderer.internal.shaders.main:send("SpecularCubemap", SpecularCubemap)
     Renderer.internal.shaders.main:send("IrradianceCubemap", IrradianceCubemap)
 end
 
@@ -252,7 +252,7 @@ local function updateCamera(dt)
     Camera:setVecPosition(cameraPosition)
 end
 
-local time = 0
+local time = 0.0
 
 function love.update(dt)
     Camera:update()
@@ -265,14 +265,17 @@ function love.update(dt)
     if love.keyboard.isDown("e") then
         voxel.waterLevel = 255
         voxel.type = 3
+
+        chunk.updateMin:set(voxel.x, voxel.y, voxel.z)
+        chunk.updateMax:set(voxel.x, voxel.y, voxel.z)
     end
 
     updateCamera(dt)
 
     time = time + dt
 
-    if time > 1 / 30 then
-        time = time - 1 / 30
+    if time > 1.0 / 30.0 then
+        time = time - 1.0 / 30.0
         LiquidsWorld:updateVoxelWorld()
     end
 end
@@ -300,7 +303,7 @@ function love.draw()
     for _, chunk in ipairs(SolidsWorld.objects.items) do
         Renderer.internal.shaders.main:send("Pos", { chunk.position.x, chunk.position.y, chunk.position.z })
 
-        if chunk.mesh then
+        if chunk.mesh and chunk.drawMesh then
             love.graphics.draw(chunk.mesh)
         end
     end
@@ -318,7 +321,7 @@ function love.draw()
     Renderer.internal.shaders.main:send("DepthTexture", depthCopyTexture)
 
     for _, chunk in ipairs(LiquidsWorld.objects.items) do
-        if chunk.mesh then
+        if chunk.mesh and chunk.drawMesh then
             table.insert(worldItems, chunk)
         end
     end
@@ -327,7 +330,7 @@ function love.draw()
         return Camera.position:distanceSqr(a.position) > Camera.position:distanceSqr(b.position)
     end)
 
-    love.graphics.setDepthMode("less", false)
+    love.graphics.setDepthMode("less", true)
 
     for _, chunk in ipairs(worldItems) do
         Renderer.internal.shaders.main:send("Pos", { chunk.position.x, chunk.position.y, chunk.position.z })
