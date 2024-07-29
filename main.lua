@@ -95,9 +95,24 @@ function love.load()
             uint8_t x, y, z;
             uint8_t type;
             uint8_t facesActive;
-            int waterLevel;
+            uint8_t waterLevel;
         } WaterVoxel;
-    ]], "WaterVoxel", "stream", true, SolidsWorld)
+    ]], "WaterVoxel", "stream", true, SolidsWorld,
+        [[
+        typedef struct {
+            int16_t x, y, z;
+            uint8_t lod;
+            WaterVoxelLod voxels[?];
+        } WaterChunkLod;
+    ]], "WaterChunkLod",
+        [[
+        typedef struct {
+            uint8_t x, y, z;
+            uint8_t type;
+            uint8_t facesActive;
+            uint16_t waterLevel;
+        } WaterVoxelLod;
+    ]], "WaterVoxelLod")
 
     SolidsWorld:generateVoxelWorld()
     LiquidsWorld:generateVoxelWorld()
@@ -204,11 +219,11 @@ local time = 0
 function love.update(dt)
     Camera:update()
 
-    local cx, cy, cz = toChunkCoords(Camera.position.x, Camera.position.y, Camera.position.z)
+    local cx, cy, cz = toChunkCoords(Camera.position.x, Camera.position.y, Camera.position.z, chunkSize)
     local chunk = LiquidsWorld:getChunk(cx, cy, cz, 0)
     local x, y, z = Camera.position:get()
     x, y, z = math.floor(x), math.floor(y), math.floor(z)
-    local voxel = getVoxelFromChunk(chunk, toInChunkCoords(x, y, z))
+    local voxel = getVoxelFromChunk(chunk, toInChunkCoords(x, y, z, chunkSize))
     if love.keyboard.isDown("e") then
         voxel.waterLevel = 255
         voxel.type = 3
