@@ -153,15 +153,16 @@ function VoxelWorldFunctions:getVoxel(x, y, z, w)
     return getVoxelFromChunk(chunk, toInChunkCoords(x, y, z, size)), chunk
 end
 
+local scale = 0.25
 function fbm(x, y, z)
-    local G = 0.5
+    x, y, z = x * scale, y * scale, z * scale
     local f = 0.03125
-    local a = 1
-    local t = 0
+    local a = 1.0
+    local t = 0.0
     for i = 1, 6 do
         t = t + a * love.math.perlinNoise(f * x, f * y, f * z)
-        f = f * 2
-        a = a * G
+        f = f * 2.0
+        a = a * 0.5
     end
     return t
 end
@@ -180,7 +181,7 @@ function VoxelWorldFunctions:generateChunkTerrain(chunk)
 
                 if self.isLiquidWorld then
                 else
-                    if voxelY + y < fbm(voxelX + x, 0, voxelZ + z) * 10.0 then
+                    if voxelY + y < fbm(voxelX + x, 0, voxelZ + z) * 30.0 then
                         voxel.type = 1
                     end
                 end
@@ -389,8 +390,16 @@ function VoxelWorldFunctions:generateChunkVertices(chunk)
         end
     end
 
-    chunk.position = vec3(chunk.chunk.x, chunk.chunk.y, chunk.chunk.z)
-    chunk.id = tostring(chunk.chunk.x) .. tostring(chunk.chunk.y) .. tostring(chunk.chunk.z)
+    if not chunk.position then
+        chunk.position = vec3(chunk.chunk.x, chunk.chunk.y, chunk.chunk.z)
+    else
+        print("position already set")
+    end
+    if not chunk.id then
+        chunk.id = tostring(chunk.chunk.x) .. tostring(chunk.chunk.y) .. tostring(chunk.chunk.z)
+    else
+        print("id already set")
+    end
     if faceCount == 0 then
         chunk.drawMesh = false
         return chunk
@@ -480,6 +489,21 @@ function VoxelWorldFunctions:updateChunkVertices(chunk)
                 local voxel = getVoxelFromChunk(chunk, voxelX, voxelY, voxelZ)
 
                 if voxel.type >= 1 then
+                    local voxelAbove = self:getVoxel(
+                        voxelX + chunk.chunk.x,
+                        voxelY + 1 + chunk.chunk.y,
+                        voxelZ + chunk.chunk.z,
+                        0
+                    )
+
+                    local waterLevel
+                    if self.isLiquidWorld then
+                        waterLevel = voxel.waterLevel
+                        if voxelAbove.type == 3 then
+                            waterLevel = 255
+                        end
+                    end
+
                     for i, face in ipairs(faces) do
                         local dir = faceDirections[i]
                         if bit.band(voxel.facesActive, bit.lshift(1, i - 1)) > 0 then
@@ -495,16 +519,29 @@ function VoxelWorldFunctions:updateChunkVertices(chunk)
 
                                         index = index + 1
 
-                                        chunk.vertices[index] = {
-                                            tonumber(vertex[1] + voxelX),
-                                            tonumber(vertex[2] + voxelY),
-                                            tonumber(vertex[3] + voxelZ),
-                                            tonumber(voxel.type),
-                                            vertex[5],
-                                            vertex[6],
-                                            clamp(tonumber(facingVoxel.waterLevel) / 2, -127, 127),
-                                            vertex[7]
-                                        }
+                                        if facingVoxel.type == 3 then
+                                            chunk.vertices[index] = {
+                                                tonumber(vertex[1] + voxelX),
+                                                tonumber(vertex[2] + voxelY),
+                                                tonumber(vertex[3] + voxelZ),
+                                                tonumber(voxel.type),
+                                                vertex[5],
+                                                vertex[6],
+                                                clamp(tonumber(facingVoxel.waterLevel) / 2, -127, 127),
+                                                vertex[7]
+                                            }
+                                        else
+                                            chunk.vertices[index] = {
+                                                tonumber(vertex[1] + voxelX),
+                                                tonumber(vertex[2] + voxelY),
+                                                tonumber(vertex[3] + voxelZ),
+                                                tonumber(voxel.type),
+                                                vertex[5],
+                                                vertex[6],
+                                                0,
+                                                vertex[7]
+                                            }
+                                        end
                                     else
                                         index = index + 1
 
@@ -515,7 +552,7 @@ function VoxelWorldFunctions:updateChunkVertices(chunk)
                                             tonumber(voxel.type),
                                             vertex[5],
                                             vertex[6],
-                                            clamp(tonumber(voxel.waterLevel) / 2 - 127, -127, 127),
+                                            clamp(tonumber(waterLevel) / 2 - 127, -127, 127),
                                             vertex[7]
                                         }
                                     end
@@ -567,8 +604,8 @@ function VoxelWorldFunctions:updateChunkVertices(chunk)
 end
 
 WorldSize = {
-    min = vec3(-3, 0, -3) * chunkSize,
-    max = vec3(3, 2, 3) * chunkSize,
+    min = vec3(-5, 0, -5) * chunkSize,
+    max = vec3(5, 4, 5) * chunkSize,
 }
 
 function VoxelWorldFunctions:generateVoxelWorld()
@@ -592,9 +629,8 @@ function VoxelWorldFunctions:generateVoxelWorld()
 
                 local object = self:generateChunkVertices(self:getChunk(x, y, z, 0))
 
-                if object then
-                    objects:add(object)
-                end
+                assert(object, "object is nil")
+                objects:add(object)
             end
         end
     end

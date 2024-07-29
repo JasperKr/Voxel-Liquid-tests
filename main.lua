@@ -36,8 +36,6 @@ require("modules.graphicsFunctions")
 require("modules.graphics")
 require("voxels")
 
-love.mouse.setRelativeMode(true)
-
 local mainRenderTarget = love.graphics.newCanvas(love.graphics.getWidth(), love.graphics.getHeight(), {
     format = "rgba16f",
     readable = true,
@@ -82,7 +80,7 @@ function love.load()
             uint8_t type;
             uint8_t facesActive;
         } Voxel;
-    ]], "Voxel", "static", false)
+    ]], "Voxel", "dynamic", false)
 
     LiquidsWorld = newVoxelWorld([[
     typedef struct {
@@ -119,7 +117,7 @@ function love.load()
 
     local stoneTexture = love.image.newImageData(16, 16)
     stoneTexture:mapPixel(function(x, y)
-        local color = love.math.random() * 0.25 + 0.5
+        local color = love.math.random() * 0.1 + 0.2
         return color, color, color, 1.0
     end)
 
@@ -212,6 +210,40 @@ function love.mousemoved(x, y, dx, dy)
     end
 end
 
+local function calculateMouseRay(x, y)
+    local vx, vy, vz, vw = Camera.inverseProjectionMatrix:vMulSepW1(
+        (x / Camera.screenSize[1] - 0.5) * 2.0,
+        (y / Camera.screenSize[2] - 0.5) * 2.0,
+        1.0
+    )
+
+    local ray = {
+        position = vec3(),
+        direction = vec3(),
+    }
+
+    vx, vy, vz = vx / vw, vy / vw, vz / vw
+    local wx, wy, wz = Camera.inverseViewMatrix:vMulSepW1(vx, vy, vz)
+
+    ray.position:set(Camera.position:get())
+    ray.direction:set(Renderer.math.normalize3(wx, wy, wz))
+
+    return ray
+end
+
+
+function love.mousereleased(x, y, button)
+    if button == 2 then
+        love.mouse.setRelativeMode(false)
+    end
+end
+
+function love.mousepressed(x, y, button)
+    if button == 2 then
+        love.mouse.setRelativeMode(true)
+    end
+end
+
 local cameraForward = vec3(0.0)
 local cameraRight = vec3(0.0)
 
@@ -254,20 +286,73 @@ end
 
 local time = 0.0
 
+local voxelsChecked = {}
+
 function love.update(dt)
     Camera:update()
 
-    local cx, cy, cz = toChunkCoords(Camera.position.x, Camera.position.y, Camera.position.z, chunkSize)
-    local chunk = LiquidsWorld:getChunk(cx, cy, cz, 0)
-    local x, y, z = Camera.position:get()
-    x, y, z = math.floor(x), math.floor(y), math.floor(z)
-    local voxel = getVoxelFromChunk(chunk, toInChunkCoords(x, y, z, chunkSize))
-    if love.keyboard.isDown("e") then
-        voxel.waterLevel = 255
-        voxel.type = 3
+    if love.mouse.isDown(1, 3) then
+        local ray = calculateMouseRay(love.mouse.getPosition())
 
-        chunk.updateMin:set(voxel.x, voxel.y, voxel.z)
-        chunk.updateMax:set(voxel.x, voxel.y, voxel.z)
+        table.clear(voxelsChecked)
+
+        local hit, hitX, hitY, hitZ = rayCast(
+            ray.position.x, ray.position.y, ray.position.z,
+            ray.direction.x, ray.direction.y, ray.direction.z,
+            1000,
+            1,
+            function(x, y, z)
+                x, y, z = math.floor(x), math.floor(y), math.floor(z)
+                local voxel = { SolidsWorld:getVoxel(x, y, z, 0) }
+                table.insert(voxelsChecked, voxel)
+                return voxel[1].type ~= 0
+            end
+        )
+
+        if hit and hitX and hitY and hitZ then
+            if love.mouse.isDown(3) then
+                hitX, hitY, hitZ = math.floor(hitX), math.floor(hitY), math.floor(hitZ)
+
+                local voxel, chunk = SolidsWorld:getVoxel(hitX, hitY, hitZ, 0)
+
+                if voxel.type ~= 0 then
+                    voxel.type = 0
+
+                    SolidsWorld:calculateChunkMeshFacesActive(chunk)
+                    SolidsWorld:updateChunkVertices(chunk)
+
+                    for x = -1, 1, 2 do
+                        for y = -1, 1, 2 do
+                            for z = -1, 1, 2 do
+                                local _, otherChunk = SolidsWorld:getVoxel(hitX + x, hitY + y, hitZ + z, 0)
+
+                                if otherChunk ~= chunk then
+                                    SolidsWorld:calculateChunkMeshFacesActive(otherChunk)
+                                    SolidsWorld:updateChunkVertices(otherChunk)
+                                end
+                            end
+                        end
+                    end
+                end
+            else
+                hitX, hitY, hitZ = math.floor(hitX), math.floor(hitY), math.floor(hitZ)
+
+                local previousVoxel = voxelsChecked[#voxelsChecked - 1]
+                if not previousVoxel then return end
+
+                local prevX, prevY, prevZ =
+                    previousVoxel[1].x + previousVoxel[2].chunk.x,
+                    previousVoxel[1].y + previousVoxel[2].chunk.y,
+                    previousVoxel[1].z + previousVoxel[2].chunk.z
+                local waterVoxel, waterChunk = LiquidsWorld:getVoxel(prevX, prevY, prevZ, 0)
+
+                waterVoxel.type = 3
+                waterVoxel.waterLevel = 255
+
+                waterChunk.updateMin:minSeparate(waterVoxel.x, waterVoxel.y, waterVoxel.z)
+                waterChunk.updateMax:maxSeparate(waterVoxel.x, waterVoxel.y, waterVoxel.z)
+            end
+        end
     end
 
     updateCamera(dt)
@@ -278,6 +363,54 @@ function love.update(dt)
         time = time - 1.0 / 30.0
         LiquidsWorld:updateVoxelWorld()
     end
+end
+
+--- Raycast function
+---@param x number
+---@param y number
+---@param z number
+---@param dirX number
+---@param dirY number
+---@param dirZ number
+---@param length number
+---@param size number
+---@param isOccupied fun(x: number, y: number, z: number): boolean
+---@return boolean, number?, number?, number?
+function rayCast(x, y, z, dirX, dirY, dirZ, length, size, isOccupied)
+    local inverseDirX, inverseDirY, inverseDirZ = 1.0 / dirX, 1.0 / dirY, 1.0 / dirZ
+
+    local inverseSize = 1.0 / size
+
+    local i = 0.0
+    local checkLimit = (length * inverseSize) * 2.0
+    local rayLength = 0.0
+
+    local limiterX = dirX < 0 and math.floor or math.ceil
+    local limiterY = dirY < 0 and math.floor or math.ceil
+    local limiterZ = dirZ < 0 and math.floor or math.ceil
+
+    while i < checkLimit do
+        i = i + 1
+        local cx = limiterX(x * inverseSize) * size
+        local cy = limiterY(y * inverseSize) * size
+        local cz = limiterZ(z * inverseSize) * size
+
+        local px, py, pz = (cx - x) * inverseDirX, (cy - y) * inverseDirY, (cz - z) * inverseDirZ
+
+        local step = math.max(0.0, math.min(px, py, pz, math.abs(rayLength - length))) * 1.001
+
+        rayLength = rayLength + step
+
+        x = x + dirX * step
+        y = y + dirY * step
+        z = z + dirZ * step
+
+        if isOccupied(x, y, z) then return true, x, y, z end
+
+        if rayLength > length then break end
+    end
+
+    return false
 end
 
 local worldItems = {}
