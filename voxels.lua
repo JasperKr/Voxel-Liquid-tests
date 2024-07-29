@@ -465,13 +465,23 @@ function VoxelWorldFunctions:generateChunkVertices(chunk)
                                     z = z + directionA[3] * maxOnFirstAxis + directionB[3] * maxOnSecondAxis
                                 end
 
+                                local u, v = vertex[5], vertex[6]
+
+                                if u ~= 0 then
+                                    u = u + maxOnFirstAxis
+                                end
+
+                                if v ~= 0 then
+                                    v = v + maxOnSecondAxis
+                                end
+
                                 table.insert(vertices, {
                                     tonumber(x + voxelX),
                                     tonumber(y + voxelY),
                                     tonumber(z + voxelZ),
                                     tonumber(voxel.type),
-                                    vertex[5],
-                                    vertex[6],
+                                    u,
+                                    v,
                                     127,
                                     vertex[7]
                                 })

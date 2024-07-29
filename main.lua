@@ -148,6 +148,7 @@ function love.load()
     }, { mipmaps = "auto" })
 
     textures:setFilter("linear", "nearest", 16)
+    textures:setWrap("repeat", "repeat")
 
     Renderer.internal.shaders.main:send("voxelTextures", textures)
 
