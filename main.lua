@@ -448,6 +448,10 @@ function love.draw()
     love.graphics.setMeshCullMode("none")
     love.graphics.setShader(Renderer.internal.shaders.main)
 
+    if love.keyboard.isDown("e") then
+        love.graphics.setWireframe(true)
+    end
+
     for _, chunk in ipairs(SolidsWorld.objects.items) do
         Renderer.internal.shaders.main:send("Pos", { chunk.position.x, chunk.position.y, chunk.position.z })
 
@@ -455,6 +459,8 @@ function love.draw()
             love.graphics.draw(chunk.mesh)
         end
     end
+
+    love.graphics.setWireframe(false)
 
     love.graphics.setDepthMode("always", true)
     ---@diagnostic disable-next-line: param-type-mismatch
