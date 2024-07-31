@@ -138,10 +138,13 @@ function VoxelWorldFunctions:getChunk(x, y, z, w)
     return self.chunkGrid[x][y][z][w]
 end
 
-function getVoxelFromChunk(chunk, x, y, z)
-    local index = x + y * chunkSize + z * chunkSize * chunkSize
+do
+    local chunkSizeSqr = chunkSize * chunkSize
+    function getVoxelFromChunk(chunk, x, y, z)
+        local index = x + y * chunkSize + z * chunkSizeSqr
 
-    return chunk.chunk.voxels[index]
+        return chunk.chunk.voxels[index], index
+    end
 end
 
 function toInChunkCoords(x, y, z, size)
@@ -157,38 +160,65 @@ function VoxelWorldFunctions:getVoxel(x, y, z, w)
     return getVoxelFromChunk(chunk, toInChunkCoords(x, y, z, size)), chunk
 end
 
-local scale = 0.25
-function fbm(x, y, z)
-    x, y, z = x * scale, y * scale, z * scale
-    local f = 0.03125
-    local a = 1.0
-    local t = 0.0
-    for i = 1, 6 do
-        ---@diagnostic disable-next-line: undefined-field
-        t = t + a * love.math.perlinNoise(f * x, f * y, f * z)
-        f = f * 2.0
-        a = a * 0.5
+local clearNoiseCache
+do
+    local noiseCache = table.new(0, chunkSize * chunkSize)
+
+    function clearNoiseCache()
+        table.clear(noiseCache)
     end
-    return t
+
+    local randomOffsetX = love.math.random(-100000, 100000)
+    local randomOffsetZ = love.math.random(-100000, 100000)
+
+    local scale = 0.25
+    ---@diagnostic disable-next-line: undefined-field
+    local perlin = love.math.perlinNoise
+    function fbm(x, z)
+        if not noiseCache[x] then
+            noiseCache[x] = {}
+        end
+        if not noiseCache[x][z] then
+            local x2, z2 = x * scale + randomOffsetX, z * scale + randomOffsetZ
+            local f = 0.03125
+            local a = 1.0
+            local t = 0.0
+            for i = 1, 5 do
+                t = t + a * perlin(f * x2, f * z2)
+                f = f * 2.0
+                a = a * 0.5
+            end
+
+            noiseCache[x][z] = t
+
+            return t
+        end
+
+        return noiseCache[x][z]
+    end
+end
+
+local function isSolid(x, y, z)
+    return y < fbm(x, z) * 30.0 - 20
 end
 
 function VoxelWorldFunctions:generateChunkTerrain(chunk)
+    if self.isLiquidWorld then
+        return
+    end
+
     local x, y, z = chunk.chunk.x, chunk.chunk.y, chunk.chunk.z
 
-    for voxelX = 0, chunkSize - 1 do
-        for voxelY = 0, chunkSize - 1 do
-            for voxelZ = 0, chunkSize - 1 do
-                local voxel = getVoxelFromChunk(chunk, voxelX, voxelY, voxelZ)
+    for voxelZ = 0, chunkSize - 1 do
+        local indexZ = voxelZ * chunkSize * chunkSize
+        for voxelX = 0, chunkSize - 1 do
+            for voxelY = 0, chunkSize - 1 do
+                local index = indexZ + voxelY * chunkSize + voxelX
 
-                voxel.x = voxelX
-                voxel.y = voxelY
-                voxel.z = voxelZ
+                local voxel = chunk.chunk.voxels[index]
 
-                if self.isLiquidWorld then
-                else
-                    if voxelY + y < fbm(voxelX + x, 0, voxelZ + z) * 30.0 then
-                        voxel.type = 1
-                    end
+                if isSolid(x + voxelX, y + voxelY, z + voxelZ) then
+                    voxel.type = 1
                 end
             end
         end
@@ -201,12 +231,7 @@ function VoxelWorldFunctions:finalizeTerrain(chunk)
             for voxelZ = 0, chunkSize - 1 do
                 local voxel = getVoxelFromChunk(chunk, voxelX, voxelY, voxelZ)
 
-                if voxel.type == 1 and self:getVoxel(
-                        voxel.x + chunk.chunk.x,
-                        voxel.y + 1 + chunk.chunk.y,
-                        voxel.z + chunk.chunk.z,
-                        0
-                    ).type < 1 then
+                if voxel.type == 1 and not isSolid(voxelX + chunk.chunk.x, voxelY + 1 + chunk.chunk.y, voxelZ + chunk.chunk.z) then
                     voxel.type = 2
                 end
             end
@@ -242,56 +267,30 @@ local faces = {
 local faceAll = faceForward + faceBackward + faceLeft + faceRight + faceUp + faceDown
 
 function VoxelWorldFunctions:calculateChunkMeshFacesActive(chunk)
-    -- ugly but can't be bothered to fix it
-    if self.isLiquidWorld then
-        for voxelX = 0, chunkSize - 1 do
-            for voxelY = 0, chunkSize - 1 do
-                for voxelZ = 0, chunkSize - 1 do
-                    local voxel = getVoxelFromChunk(chunk, voxelX, voxelY, voxelZ)
+    for voxelZ = 0, chunkSize - 1 do
+        local z = voxelZ + chunk.chunk.z
+        local indexZ = voxelZ * chunkSize * chunkSize
 
-                    if voxel.type >= 1 then
-                        local x, y, z = voxel.x + chunk.chunk.x, voxel.y + chunk.chunk.y,
-                            voxel.z + chunk.chunk.z
+        for voxelY = 0, chunkSize - 1 do
+            local y = voxelY + chunk.chunk.y
+            local indexYZ = indexZ + voxelY * chunkSize
 
-                        voxel.facesActive = faceAll
+            for voxelX = 0, chunkSize - 1 do
+                local x = voxelX + chunk.chunk.x
+                local voxel = chunk.chunk.voxels[indexYZ + voxelX]
 
-                        for _, face in ipairs(faceDirections) do
-                            local neighbour = self.solidsVoxelWorld:getVoxel(x + face[1], y + face[2], z + face[3], 0)
+                if voxel.type >= 1 then
+                    voxel.facesActive = faceAll
 
-                            if neighbour.type >= 1 then
-                                voxel.facesActive = voxel.facesActive - face[4]
-                            else
-                                neighbour = self:getVoxel(x + face[1], y + face[2], z + face[3], 0)
+                    for _, face in ipairs(faceDirections) do
+                        local neighbour = self:getVoxel(x + face[1], y + face[2], z + face[3], 0)
 
-                                -- if neighbour.type == 3 and neighbour.waterLevel >= voxel.waterLevel then
-                                -- voxel.facesActive = voxel.facesActive - face[4]
-                                -- end
-                            end
+                        if neighbour.type >= 1 then
+                            voxel.facesActive = voxel.facesActive - face[4]
                         end
                     end
-                end
-            end
-        end
-    else
-        for voxelX = 0, chunkSize - 1 do
-            for voxelY = 0, chunkSize - 1 do
-                for voxelZ = 0, chunkSize - 1 do
-                    local voxel = getVoxelFromChunk(chunk, voxelX, voxelY, voxelZ)
-
-                    if voxel.type >= 1 then
-                        local x, y, z = voxel.x + chunk.chunk.x, voxel.y + chunk.chunk.y,
-                            voxel.z + chunk.chunk.z
-
-                        voxel.facesActive = faceAll
-
-                        for _, face in ipairs(faceDirections) do
-                            local neighbour = self:getVoxel(x + face[1], y + face[2], z + face[3], 0)
-
-                            if neighbour.type >= 1 then
-                                voxel.facesActive = voxel.facesActive - face[4]
-                            end
-                        end
-                    end
+                else
+                    voxel.facesActive = 0
                 end
             end
         end
@@ -321,9 +320,207 @@ local function generateQuadIndices(quadCount)
     return indices
 end
 
+do
+    local directions = {
+        { { 1, 0, 0 }, { 0, 1, 0 } }, -- forwards -> loop X+, then loop Y+
+        { { 1, 0, 0 }, { 0, 1, 0 } }, -- backwards -> loop X+, then loop Y+
+        { { 0, 0, 1 }, { 0, 1, 0 } }, -- left -> loop Z+, then loop Y+
+        { { 0, 0, 1 }, { 0, 1, 0 } }, -- right -> loop Z+, then loop Y+
+        { { 1, 0, 0 }, { 0, 0, 1 } }, -- up -> loop X+, then loop Z+
+        { { 1, 0, 0 }, { 0, 0, 1 } }, -- down -> loop X+, then loop Z+
+    }
+
+    function VoxelWorldFunctions:createVertices(chunk, vertices)
+        local index = 0
+        local faceCount = 0
+
+        if self.isLiquidWorld then
+            for voxelX = 0, chunkSize - 1 do
+                for voxelY = 0, chunkSize - 1 do
+                    for voxelZ = 0, chunkSize - 1 do
+                        local voxel = getVoxelFromChunk(chunk, voxelX, voxelY, voxelZ)
+
+                        if voxel.type >= 1 then
+                            for i, face in ipairs(faces) do
+                                local dir = faceDirections[i]
+                                if bit.band(voxel.facesActive, bit.lshift(1, i - 1)) > 0 then
+                                    faceCount = faceCount + 1
+
+                                    for _, vertex in ipairs(face) do
+                                        if i < 5 and vertex[2] == 0 then
+                                            local facingVoxel = self:getVoxel(
+                                                voxelX + dir[1] + chunk.chunk.x,
+                                                voxelY + dir[2] + chunk.chunk.y,
+                                                voxelZ + dir[3] + chunk.chunk.z,
+                                                0
+                                            )
+
+                                            index = index + 1
+                                            vertices[index] = {
+                                                tonumber(vertex[1] + voxelX),
+                                                tonumber(vertex[2] + voxelY),
+                                                tonumber(vertex[3] + voxelZ),
+                                                tonumber(voxel.type),
+                                                vertex[5],
+                                                vertex[6],
+                                                clamp(tonumber(facingVoxel.waterLevel) / 2, -127, 127),
+                                                vertex[7]
+                                            }
+                                        else
+                                            index = index + 1
+                                            vertices[index] = {
+                                                tonumber(vertex[1] + voxelX),
+                                                tonumber(vertex[2] + voxelY),
+                                                tonumber(vertex[3] + voxelZ),
+                                                tonumber(voxel.type),
+                                                vertex[5],
+                                                vertex[6],
+                                                clamp(tonumber(voxel.waterLevel) / 2 - 127, -127, 127),
+                                                vertex[7]
+                                            }
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        else
+            local voxelsCombined = {}
+
+            -- do greedy meshing
+            for voxelZ = 0, chunkSize - 1 do
+                local indexZ = voxelZ * chunkSize * chunkSize
+                for voxelY = 0, chunkSize - 1 do
+                    local indexYZ = indexZ + voxelY * chunkSize
+                    for voxelX = 0, chunkSize - 1 do
+                        local voxelIndex = indexYZ + voxelX
+
+                        local voxel = chunk.chunk.voxels[voxelIndex]
+                        for side, face in ipairs(faces) do
+                            local faceBit = bit.lshift(1, side - 1)
+
+                            if voxelsCombined[voxelIndex] and voxelsCombined[voxelIndex][side] then
+                                goto continue
+                            end
+
+                            if voxel.type ~= 0 and bit.band(voxel.facesActive, faceBit) > 0 then
+                                local maxOnFirstAxis = 15
+                                local maxOnSecondAxis = -1
+
+                                local directionA = directions[side][1]
+                                local directionB = directions[side][2]
+
+                                local otherXB, otherYB, otherZB = voxelX, voxelY, voxelZ
+
+                                for i = 0, 15 do
+                                    local otherXA, otherYA, otherZA = otherXB, otherYB, otherZB
+
+                                    local actualMaxOnFirstAxis = -1
+                                    for j = 0, maxOnFirstAxis do
+                                        if otherXA > 15 or otherYA > 15 or otherZA > 15 then
+                                            break
+                                        end
+
+                                        local otherVoxel = getVoxelFromChunk(chunk, otherXA, otherYA, otherZA)
+
+                                        if voxel.type ~= otherVoxel.type then
+                                            break
+                                        end
+
+                                        if bit.band(otherVoxel.facesActive, faceBit) == 0 then
+                                            break
+                                        end
+
+                                        otherXA = otherXA + directionA[1]
+                                        otherYA = otherYA + directionA[2]
+                                        otherZA = otherZA + directionA[3]
+
+                                        actualMaxOnFirstAxis = actualMaxOnFirstAxis + 1
+                                    end
+
+                                    if i == 0 then
+                                        maxOnFirstAxis = actualMaxOnFirstAxis
+                                    else
+                                        if actualMaxOnFirstAxis ~= maxOnFirstAxis then
+                                            break
+                                        end
+                                    end
+
+                                    otherXA, otherYA, otherZA = otherXB, otherYB, otherZB
+
+                                    for j = 0, maxOnFirstAxis do
+                                        local otherVoxel, otherIndex = getVoxelFromChunk(chunk, otherXA, otherYA, otherZA)
+
+                                        otherVoxel.facesActive = otherVoxel.facesActive - faceBit
+
+                                        if not voxelsCombined[otherIndex] then
+                                            voxelsCombined[otherIndex] = {}
+                                        end
+                                        voxelsCombined[otherIndex][side] = true
+
+                                        otherXA = otherXA + directionA[1]
+                                        otherYA = otherYA + directionA[2]
+                                        otherZA = otherZA + directionA[3]
+                                    end
+
+                                    otherXB = otherXB + directionB[1]
+                                    otherYB = otherYB + directionB[2]
+                                    otherZB = otherZB + directionB[3]
+
+                                    maxOnSecondAxis = maxOnSecondAxis + 1
+                                end
+
+                                faceCount = faceCount + 1
+                                for _, vertex in ipairs(face) do
+                                    local x, y, z = vertex[1], vertex[2], vertex[3]
+                                    if x ~= 0 then
+                                        x = x + directionA[1] * maxOnFirstAxis + directionB[1] * maxOnSecondAxis
+                                    end
+                                    if y ~= 0 then
+                                        y = y + directionA[2] * maxOnFirstAxis + directionB[2] * maxOnSecondAxis
+                                    end
+                                    if z ~= 0 then
+                                        z = z + directionA[3] * maxOnFirstAxis + directionB[3] * maxOnSecondAxis
+                                    end
+
+                                    local u, v = vertex[5], vertex[6]
+
+                                    if u ~= 0 then
+                                        u = u + maxOnFirstAxis
+                                    end
+
+                                    if v ~= 0 then
+                                        v = v + maxOnSecondAxis
+                                    end
+
+                                    index = index + 1
+                                    vertices[index] = {
+                                        tonumber(x + voxelX),
+                                        tonumber(y + voxelY),
+                                        tonumber(z + voxelZ),
+                                        tonumber(voxel.type),
+                                        u,
+                                        v,
+                                        127,
+                                        vertex[7]
+                                    }
+                                end
+                            end
+                            ::continue::
+                        end
+                    end
+                end
+            end
+        end
+
+        return index, faceCount
+    end
+end
+
 function VoxelWorldFunctions:generateChunkVertices(chunk)
     local vertices = {}
-    local faceCount = 0
 
     local scale
     if self.isLiquidWorld then
@@ -332,68 +529,7 @@ function VoxelWorldFunctions:generateChunkVertices(chunk)
         scale = 1
     end
 
-    for voxelX = 0, chunkSize - 1 do
-        for voxelY = 0, chunkSize - 1 do
-            for voxelZ = 0, chunkSize - 1 do
-                local voxel = getVoxelFromChunk(chunk, voxelX, voxelY, voxelZ)
-
-                if voxel.type >= 1 then
-                    for i, face in ipairs(faces) do
-                        local dir = faceDirections[i]
-                        if bit.band(voxel.facesActive, bit.lshift(1, i - 1)) > 0 then
-                            faceCount = faceCount + 1
-
-                            for _, vertex in ipairs(face) do
-                                if self.isLiquidWorld then
-                                    if i < 5 and vertex[2] == 0 then
-                                        local facingVoxel = self:getVoxel(
-                                            voxelX + dir[1] + chunk.chunk.x,
-                                            voxelY + dir[2] + chunk.chunk.y,
-                                            voxelZ + dir[3] + chunk.chunk.z,
-                                            0
-                                        )
-
-                                        table.insert(vertices, {
-                                            tonumber(vertex[1] + voxelX),
-                                            tonumber(vertex[2] + voxelY),
-                                            tonumber(vertex[3] + voxelZ),
-                                            tonumber(voxel.type),
-                                            vertex[5],
-                                            vertex[6],
-                                            clamp(tonumber(facingVoxel.waterLevel) / 2, -127, 127),
-                                            vertex[7]
-                                        })
-                                    else
-                                        table.insert(vertices, {
-                                            tonumber(vertex[1] + voxelX),
-                                            tonumber(vertex[2] + voxelY),
-                                            tonumber(vertex[3] + voxelZ),
-                                            tonumber(voxel.type),
-                                            vertex[5],
-                                            vertex[6],
-                                            clamp(tonumber(voxel.waterLevel) / 2 - 127, -127, 127),
-                                            vertex[7]
-                                        })
-                                    end
-                                else
-                                    table.insert(vertices, {
-                                        tonumber(vertex[1] + voxelX),
-                                        tonumber(vertex[2] + voxelY),
-                                        tonumber(vertex[3] + voxelZ),
-                                        tonumber(voxel.type),
-                                        vertex[5],
-                                        vertex[6],
-                                        127,
-                                        vertex[7]
-                                    })
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
+    local index, faceCount = self:createVertices(chunk, vertices)
 
     if not chunk.position then
         chunk.position = vec3(chunk.chunk.x, chunk.chunk.y, chunk.chunk.z)
@@ -479,112 +615,14 @@ function VoxelWorldFunctions:downSampleChunk(chunk)
     end
 end
 
----comment
----@return nil
 function VoxelWorldFunctions:updateChunkVertices(chunk)
-    local index = 0
     local vertexCount = #chunk.vertices
 
     -- local scale = bit.lshift(1, chunk.chunk.lod)
-
-    for voxelX = 0, chunkSize - 1 do
-        for voxelY = 0, chunkSize - 1 do
-            for voxelZ = 0, chunkSize - 1 do
-                local voxel = getVoxelFromChunk(chunk, voxelX, voxelY, voxelZ)
-
-                if voxel.type >= 1 then
-                    local voxelAbove = self:getVoxel(
-                        voxelX + chunk.chunk.x,
-                        voxelY + 1 + chunk.chunk.y,
-                        voxelZ + chunk.chunk.z,
-                        0
-                    )
-
-                    local waterLevel
-                    if self.isLiquidWorld then
-                        waterLevel = voxel.waterLevel
-                        if voxelAbove.type == 3 then
-                            waterLevel = 255
-                        end
-                    end
-
-                    for i, face in ipairs(faces) do
-                        local dir = faceDirections[i]
-                        if bit.band(voxel.facesActive, bit.lshift(1, i - 1)) > 0 then
-                            for _, vertex in ipairs(face) do
-                                if self.isLiquidWorld then
-                                    if i < 5 and vertex[2] == 0 then
-                                        local facingVoxel = self:getVoxel(
-                                            voxelX + dir[1] + chunk.chunk.x,
-                                            voxelY + dir[2] + chunk.chunk.y,
-                                            voxelZ + dir[3] + chunk.chunk.z,
-                                            0
-                                        )
-
-                                        index = index + 1
-
-                                        if facingVoxel.type == 3 then
-                                            chunk.vertices[index] = {
-                                                tonumber(vertex[1] + voxelX),
-                                                tonumber(vertex[2] + voxelY),
-                                                tonumber(vertex[3] + voxelZ),
-                                                tonumber(voxel.type),
-                                                vertex[5],
-                                                vertex[6],
-                                                clamp(tonumber(facingVoxel.waterLevel) / 2, -127, 127),
-                                                vertex[7]
-                                            }
-                                        else
-                                            chunk.vertices[index] = {
-                                                tonumber(vertex[1] + voxelX),
-                                                tonumber(vertex[2] + voxelY),
-                                                tonumber(vertex[3] + voxelZ),
-                                                tonumber(voxel.type),
-                                                vertex[5],
-                                                vertex[6],
-                                                0,
-                                                vertex[7]
-                                            }
-                                        end
-                                    else
-                                        index = index + 1
-
-                                        chunk.vertices[index] = {
-                                            tonumber(vertex[1] + voxelX),
-                                            tonumber(vertex[2] + voxelY),
-                                            tonumber(vertex[3] + voxelZ),
-                                            tonumber(voxel.type),
-                                            vertex[5],
-                                            vertex[6],
-                                            clamp(tonumber(waterLevel) / 2 - 127, -127, 127),
-                                            vertex[7]
-                                        }
-                                    end
-                                else
-                                    index = index + 1
-
-                                    chunk.vertices[index] = {
-                                        tonumber(vertex[1] + voxelX),
-                                        tonumber(vertex[2] + voxelY),
-                                        tonumber(vertex[3] + voxelZ),
-                                        tonumber(voxel.type),
-                                        vertex[5],
-                                        vertex[6],
-                                        127,
-                                        vertex[7]
-                                    }
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
+    local index, faceCount = self:createVertices(chunk, chunk.vertices)
 
     if index == 0 then
         chunk.drawMesh = false
-
         return nil
     end
 
@@ -608,38 +646,28 @@ function VoxelWorldFunctions:updateChunkVertices(chunk)
 end
 
 WorldSize = {
-    min = vec3(-5, 0, -5) * chunkSize,
-    max = vec3(5, 4, 5) * chunkSize,
+    min = vec3(-3, -1, -3) * chunkSize,
+    max = vec3(3, 2, 3) * chunkSize,
 }
 
 function VoxelWorldFunctions:generateVoxelWorld()
-    local objects = newIdIndexedTable()
-    for x = WorldSize.min.x, WorldSize.max.x, chunkSize do
-        for y = WorldSize.min.y, WorldSize.max.y, chunkSize do
-            for z = WorldSize.min.z, WorldSize.max.z, chunkSize do
-                self:generateChunkTerrain(self:getChunk(x, y, z, 0))
-            end
-        end
-    end
+    self.objects = newIdIndexedTable()
 
     for x = WorldSize.min.x, WorldSize.max.x, chunkSize do
-        for y = WorldSize.min.y, WorldSize.max.y, chunkSize do
-            for z = WorldSize.min.z, WorldSize.max.z, chunkSize do
-                if not self.isLiquidWorld then
-                    self:finalizeTerrain(self:getChunk(x, y, z, 0))
-                end
-
-                self:calculateChunkMeshFacesActive(self:getChunk(x, y, z, 0))
-
-                local object = self:generateChunkVertices(self:getChunk(x, y, z, 0))
+        for z = WorldSize.min.z, WorldSize.max.z, chunkSize do
+            clearNoiseCache()
+            for y = WorldSize.min.y, WorldSize.max.y, chunkSize do
+                local chunk = self:getChunk(x, y, z, 0)
+                self:generateChunkTerrain(chunk)
+                self:finalizeTerrain(chunk)
+                self:calculateChunkMeshFacesActive(chunk)
+                local object = self:generateChunkVertices(chunk)
 
                 assert(object, "object is nil")
-                objects:add(object)
+                self.objects:add(object)
             end
         end
     end
-
-    self.objects = objects
 end
 
 local flowDirections = {
@@ -748,6 +776,10 @@ local curUpdateMin = vec3()
 local curUpdateMax = vec3()
 
 function VoxelWorldFunctions:updateVoxelWorld()
+    if not self.isLiquidWorld then
+        return
+    end
+
     for x = WorldSize.min.x, WorldSize.max.x, chunkSize do
         for y = WorldSize.min.y, WorldSize.max.y, chunkSize do
             for z = WorldSize.min.z, WorldSize.max.z, chunkSize do

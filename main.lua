@@ -77,7 +77,6 @@ function love.load()
     } Chunk;
     ]], "Chunk", [[
         typedef struct {
-            uint8_t x, y, z;
             uint8_t type;
             uint8_t facesActive;
         } Voxel;
@@ -91,7 +90,6 @@ function love.load()
     } WaterChunk;
     ]], "WaterChunk", [[
         typedef struct {
-            uint8_t x, y, z;
             uint8_t type;
             uint8_t facesActive;
             uint8_t waterLevel;
@@ -106,15 +104,18 @@ function love.load()
     ]], "WaterChunkLod",
         [[
         typedef struct {
-            uint8_t x, y, z;
             uint8_t type;
             uint8_t facesActive;
             uint16_t waterLevel;
         } WaterVoxelLod;
     ]], "WaterVoxelLod")
 
+    local t = love.timer.getTime()
     SolidsWorld:generateVoxelWorld()
+    print("Solid world generation time: " .. love.timer.getTime() - t)
+    t = love.timer.getTime()
     LiquidsWorld:generateVoxelWorld()
+    print("Liquid world generation time: " .. love.timer.getTime() - t)
 
     local stoneTexture = love.image.newImageData(16, 16)
     stoneTexture:mapPixel(function(x, y)
@@ -148,6 +149,7 @@ function love.load()
     }, { mipmaps = "auto" })
 
     textures:setFilter("linear", "nearest", 16)
+    textures:setWrap("repeat", "repeat")
 
     Renderer.internal.shaders.main:send("voxelTextures", textures)
 
@@ -311,9 +313,15 @@ function love.update(dt)
             1,
             function(x, y, z)
                 x, y, z = math.floor(x), math.floor(y), math.floor(z)
-                local voxel = { SolidsWorld:getVoxel(x, y, z, 0) }
-                table.insert(voxelsChecked, voxel)
-                return voxel[1].type ~= 0
+                local voxel, chunk = SolidsWorld:getVoxel(x, y, z, 0)
+                table.insert(voxelsChecked, {
+                    voxel = voxel,
+                    chunk = chunk,
+                    x = x,
+                    y = y,
+                    z = z,
+                })
+                return voxel.type ~= 0
             end
         )
 
@@ -355,16 +363,16 @@ function love.update(dt)
                 if not previousVoxel then return end
 
                 local prevX, prevY, prevZ =
-                    previousVoxel[1].x + previousVoxel[2].chunk.x,
-                    previousVoxel[1].y + previousVoxel[2].chunk.y,
-                    previousVoxel[1].z + previousVoxel[2].chunk.z
+                    previousVoxel.x + previousVoxel.chunk.chunk.x,
+                    previousVoxel.y + previousVoxel.chunk.chunk.y,
+                    previousVoxel.z + previousVoxel.chunk.chunk.z
                 local waterVoxel, waterChunk = LiquidsWorld:getVoxel(prevX, prevY, prevZ, 0)
 
                 waterVoxel.type = 3
                 waterVoxel.waterLevel = 255
 
-                waterChunk.updateMin:minSeparate(waterVoxel.x, waterVoxel.y, waterVoxel.z)
-                waterChunk.updateMax:maxSeparate(waterVoxel.x, waterVoxel.y, waterVoxel.z)
+                waterChunk.updateMin:minSeparate(prevX, prevY, prevZ)
+                waterChunk.updateMax:maxSeparate(prevX, prevY, prevZ)
             end
         end
     end
@@ -376,6 +384,7 @@ function love.update(dt)
     if time > 1.0 / 30.0 then
         time = time - 1.0 / 30.0
         LiquidsWorld:updateVoxelWorld()
+        SolidsWorld:updateVoxelWorld()
     end
 end
 
@@ -447,6 +456,10 @@ function love.draw()
     love.graphics.setMeshCullMode("none")
     love.graphics.setShader(Renderer.internal.shaders.main)
 
+    if love.keyboard.isDown("e") then
+        love.graphics.setWireframe(true)
+    end
+
     for _, chunk in ipairs(SolidsWorld.objects.items) do
         Renderer.internal.shaders.main:send("Pos", { chunk.position.x, chunk.position.y, chunk.position.z })
 
@@ -454,6 +467,8 @@ function love.draw()
             love.graphics.draw(chunk.mesh)
         end
     end
+
+    love.graphics.setWireframe(false)
 
     love.graphics.setDepthMode("always", true)
     ---@diagnostic disable-next-line: param-type-mismatch
